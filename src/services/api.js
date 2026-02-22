@@ -23,7 +23,8 @@ async function callGAS(action, data = {}) {
     const response = await fetch(GAS_API_URL, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        // Use a simple content type to avoid preflight failures on Apps Script.
+        'Content-Type': 'text/plain;charset=utf-8'
       },
       body: JSON.stringify(payload)
     });
