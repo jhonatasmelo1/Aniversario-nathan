@@ -105,6 +105,8 @@ export default function App() {
   const [selectedGift, setSelectedGift] = useState(null);
   const [donationAmount, setDonationAmount] = useState('');
   const [pixCopied, setPixCopied] = useState(false);
+  const [isSavingRSVP, setIsSavingRSVP] = useState(false);
+  const [isSavingDonation, setIsSavingDonation] = useState(false);
   
   const [showThankYou, setShowThankYou] = useState(false);
   const [lastDonationAmount, setLastDonationAmount] = useState('');
@@ -328,6 +330,8 @@ export default function App() {
   };
 
   const handleConfirmPresence = async () => {
+    if (isSavingRSVP) return;
+
     const convidadosConfirmados = Object.keys(confirmedMembers).filter(nome => confirmedMembers[nome]);
     const presencaData = {
       familia: family.familia,
@@ -336,32 +340,38 @@ export default function App() {
       preferencias: isAttending ? preferences : null,
       data_confirmacao: new Date().toISOString()
     };
+
+    setIsSavingRSVP(true);
     
     // Salva localmente
     localStorage.setItem(`NATHAN_PRESENCA_${family.codigo}`, JSON.stringify(presencaData));
     
-    // Salva na planilha do Google
     try {
-      await saveRSVP({
-        codigo: family.codigo,
-        familia: family.familia,
-        status: isAttending ? 'sim' : 'nao',
-        membros_confirmados: isAttending ? convidadosConfirmados : [],
-        preferencias: isAttending ? { ...preferences } : {}
-      });
-      console.log('RSVP salvo na planilha com sucesso!');
-    } catch (error) {
-      console.warn('Erro ao salvar RSVP na planilha:', error);
-      // Continua mesmo se falhar, já que salvou localmente
+      // Salva na planilha do Google
+      try {
+        await saveRSVP({
+          codigo: family.codigo,
+          familia: family.familia,
+          status: isAttending ? 'sim' : 'nao',
+          membros_confirmados: isAttending ? convidadosConfirmados : [],
+          preferencias: isAttending ? { ...preferences } : {}
+        });
+        console.log('RSVP salvo na planilha com sucesso!');
+      } catch (error) {
+        console.warn('Erro ao salvar RSVP na planilha:', error);
+        // Continua mesmo se falhar, já que salvou localmente
+      }
+
+      // Atualizar presencasDB em tempo real
+      setPresencasDB(prev => ({
+        ...prev,
+        [family.codigo]: presencaData
+      }));
+
+      changeStep(4);
+    } finally {
+      setIsSavingRSVP(false);
     }
-    
-    // Atualizar presencasDB em tempo real
-    setPresencasDB(prev => ({
-      ...prev,
-      [family.codigo]: presencaData
-    }));
-    
-    changeStep(4);
   };
 
   const handleContribute = (gift) => {
@@ -371,7 +381,10 @@ export default function App() {
   };
 
   const processDonation = async () => {
+    if (isSavingDonation) return;
     if (!donationAmount || isNaN(donationAmount) || Number(donationAmount) <= 0) return;
+
+    setIsSavingDonation(true);
     
     const numAmount = Number(donationAmount);
     
@@ -385,37 +398,41 @@ export default function App() {
     setGifts(updatedGifts);
     setLastDonationAmount(donationAmount);
     
-    // Salva doação na planilha
     try {
-      const donationResult = await saveDonation({
-        codigo: family?.codigo || '',
-        familia: family?.familia || 'Anônimo',
-        giftId: selectedGift.id,
-        giftName: selectedGift.name,
-        amount: numAmount,
-        metodo: 'PIX',
-        comprovanteUrl: '',
-        observacoes: ''
-      });
-      console.log('Doação salva na planilha com sucesso!', donationResult);
-      
-      // Atualiza o valor arrecadado do gift se retornou newCurrent
-      if (donationResult.ok && donationResult.newCurrent) {
-        const updatedGifts = gifts.map(g => {
-          if (g.id === selectedGift.id) {
-            return { ...g, current: donationResult.newCurrent };
-          }
-          return g;
+      // Salva doação na planilha
+      try {
+        const donationResult = await saveDonation({
+          codigo: family?.codigo || '',
+          familia: family?.familia || 'Anônimo',
+          giftId: selectedGift.id,
+          giftName: selectedGift.name,
+          amount: numAmount,
+          metodo: 'PIX',
+          comprovanteUrl: '',
+          observacoes: ''
         });
-        setGifts(updatedGifts);
+        console.log('Doação salva na planilha com sucesso!', donationResult);
+
+        // Atualiza o valor arrecadado do gift se retornou newCurrent
+        if (donationResult.ok && donationResult.newCurrent) {
+          const updatedGifts = gifts.map(g => {
+            if (g.id === selectedGift.id) {
+              return { ...g, current: donationResult.newCurrent };
+            }
+            return g;
+          });
+          setGifts(updatedGifts);
+        }
+      } catch (error) {
+        console.warn('Erro ao salvar doação na planilha:', error);
+        // Continua mesmo se falhar, já que salvou localmente
       }
-    } catch (error) {
-      console.warn('Erro ao salvar doação na planilha:', error);
-      // Continua mesmo se falhar, já que salvou localmente
+
+      setSelectedGift(null);
+      setShowThankYou(true);
+    } finally {
+      setIsSavingDonation(false);
     }
-    
-    setSelectedGift(null);
-    setShowThankYou(true);
   };
 
   const copyPix = () => {
@@ -647,14 +664,14 @@ export default function App() {
 
           <button 
             onClick={handleConfirmPresence}
-            disabled={isAttending && !Object.values(confirmedMembers).some(Boolean)}
+            disabled={isSavingRSVP || (isAttending && !Object.values(confirmedMembers).some(Boolean))}
             className={`w-full py-4 rounded-xl font-medium shadow-md transition-all flex justify-center items-center gap-2 ${
-              (!isAttending || Object.values(confirmedMembers).some(Boolean))
+              (!isSavingRSVP && (!isAttending || Object.values(confirmedMembers).some(Boolean)))
                 ? 'bg-slate-800 text-white hover:bg-slate-700 hover:shadow-lg' 
                 : 'bg-slate-200 text-slate-400 cursor-not-allowed'
             }`}
           >
-            {isAttending ? 'Confirmar e Continuar' : 'Avisar Ausência e Continuar'}
+            {isSavingRSVP ? 'Salvando...' : (isAttending ? 'Confirmar e Continuar' : 'Avisar Ausência e Continuar')}
             <ChevronRight className="w-5 h-5" />
           </button>
         </div>
@@ -1154,10 +1171,10 @@ export default function App() {
               <button 
                 type="button"
                 onClick={processDonation}
-                disabled={!donationAmount || Number(donationAmount) <= 0}
+                disabled={isSavingDonation || !donationAmount || Number(donationAmount) <= 0}
                 className="w-full py-4 bg-green-500 text-white rounded-xl font-bold hover:bg-green-600 transition disabled:opacity-50"
               >
-                Já realizei o PIX
+                {isSavingDonation ? 'Enviando...' : 'Já realizei o PIX'}
               </button>
             </div>
           </div>
