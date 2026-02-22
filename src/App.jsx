@@ -683,7 +683,7 @@ export default function App() {
               <h3 className="text-3xl md:text-4xl font-serif text-white drop-shadow-md">Lista de Sonhos do Nathan ☀️</h3>
               <p className="text-base md:text-lg text-slate-200 max-w-xl mx-auto font-light">
                 {isAttending 
-                  ? 'Se desejar presentear de forma diferente, você pode nos ajudar a realizar a comprar dos grandes sonhos do nosso Solzinho.'
+                  ? 'Mas, se desejar presentear de forma diferente e não souber como, disponibilizamos uma opção prática para contribuir com a alegria do nosso Solzinho.'
                   : 'Caso ainda deseje presentear de alguma forma, você pode participar da nossa vaquinha.'}
               </p>
             </div>
