@@ -4,6 +4,7 @@ import {
   CheckCircle2, AlertCircle, ChevronRight, PartyPopper, Settings, Lock, X, Save, Upload,
   Users, Utensils, Coffee, Clock, Wallet, TrendingUp
 } from 'lucide-react';
+import { saveRSVP, saveDonation, getGifts, syncAllData } from './services/api';
 
 // --- BASE DE DADOS DAS FAMÍLIAS ---
 const FAMILIAS_DB = [
@@ -34,14 +35,24 @@ const FAMILIAS_DB = [
   { id: 25, codigo: "SOL025", familia: "Família 25", membros: [{nome: "Assis", crianca: false}, {nome: "Filha Assis", crianca: false}] },
 ];
 
-const DEFAULT_BG_IMAGE = 'https://i.imgur.com/rgLEPj0.jpeg';
-const DEFAULT_THANKYOU_IMAGE = 'https://images.unsplash.com/photo-1519689680058-324335c77eba?auto=format&fit=crop&w=800&q=80';
+// --- FOTOS DO NATHAN ---
+const NATHAN_PHOTOS = [
+  '/Nathan_Playground.png',
+  '/Nathan_no_carro.png',
+  '/Nathan_Carrinho_de_controle_remoto.png',
+  '/Nathan_brincando_monsetori.png',
+  '/nathan_imagem_de_fundo.png',
+  '/Nathan_feliz_após_o_pix.jpeg'
+];
+
+const DEFAULT_BG_IMAGE = '/nathan_imagem_de_fundo.png';
+const DEFAULT_THANKYOU_IMAGE = '/Nathan_feliz_após_o_pix.jpeg';
 
 const INITIAL_GIFTS = [
-  { id: 1, name: "Carro Elétrico Infantil", target: 1200, current: 850, image: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%233498db' width='100' height='100'/%3E%3Ctext x='50' y='50' font-size='40' fill='white' text-anchor='middle' dominant-baseline='middle'%3E🚗%3C/text%3E%3C/svg%3E", color: "bg-blue-400" },
-  { id: 2, name: "Mini Playground Infantil", target: 1500, current: 1500, image: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%2327ae60' width='100' height='100'/%3E%3Ctext x='50' y='50' font-size='40' fill='white' text-anchor='middle' dominant-baseline='middle'%3E🎡%3C/text%3E%3C/svg%3E", color: "bg-green-400" }, 
-  { id: 3, name: "Carro Controle Remoto", target: 800, current: 300, image: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23f1c40f' width='100' height='100'/%3E%3Ctext x='50' y='50' font-size='40' fill='white' text-anchor='middle' dominant-baseline='middle'%3E🏎️%3C/text%3E%3C/svg%3E", color: "bg-yellow-400" },
-  { id: 4, name: "Kit Educativo Montessori", target: 600, current: 450, image: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23e67e22' width='100' height='100'/%3E%3Ctext x='50' y='50' font-size='40' fill='white' text-anchor='middle' dominant-baseline='middle'%3E📚%3C/text%3E%3C/svg%3E", color: "bg-orange-400" }
+  { id: 1, name: "Carro Elétrico Infantil", target: 1200, current: 850, image: "/Nathan_no_carro.png", color: "bg-blue-400" },
+  { id: 2, name: "Mini Playground Infantil", target: 1500, current: 1500, image: "/Nathan_Playground.png", color: "bg-green-400" }, 
+  { id: 3, name: "Carro Controle Remoto", target: 800, current: 300, image: "/Nathan_Carrinho_de_controle_remoto.png", color: "bg-yellow-400" },
+  { id: 4, name: "Kit Educativo Montessori", target: 600, current: 450, image: "/Nathan_brincando_monsetori.png", color: "bg-orange-400" }
 ];
 
 const FOOD_OPTIONS = [
@@ -71,7 +82,24 @@ export default function App() {
   
   const [gifts, setGifts] = useState(() => {
     const saved = localStorage.getItem('NATHAN_GIFTS_DB');
-    return saved ? JSON.parse(saved) : INITIAL_GIFTS;
+    let loadedGifts = saved ? JSON.parse(saved) : INITIAL_GIFTS;
+    
+    // Migrar imagens antigas (SVG) para fotos do Nathan
+    const imageMap = {
+      0: '/Nathan_no_carro.png',
+      1: '/Nathan_Playground.png',
+      2: '/Nathan_Carrinho_de_controle_remoto.png',
+      3: '/Nathan_brincando_monsetori.png'
+    };
+    
+    loadedGifts = loadedGifts.map((gift, idx) => {
+      if (gift.image && gift.image.startsWith('data:image/svg')) {
+        return { ...gift, image: imageMap[idx] || gift.image };
+      }
+      return gift;
+    });
+    
+    return loadedGifts;
   });
   
   const [selectedGift, setSelectedGift] = useState(null);
@@ -92,6 +120,40 @@ export default function App() {
 
   const [isVisible, setIsVisible] = useState(false);
   useEffect(() => { setIsVisible(true); }, [step]);
+
+  // Sincronização com Google Sheets em tempo real
+  useEffect(() => {
+    const syncGifts = async () => {
+      try {
+        const onlineGifts = await getGifts();
+        if (onlineGifts && onlineGifts.length > 0) {
+          // Mescla dados locais com dados da planilha (prioriza valores arrecadados da planilha)
+          const merged = gifts.map(localGift => {
+            const cloudGift = onlineGifts.find(g => g.id === localGift.id);
+            if (cloudGift) {
+              return {
+                ...localGift,
+                current: cloudGift.current, // Atualiza arrecadação da planilha
+                target: cloudGift.target || localGift.target
+              };
+            }
+            return localGift;
+          });
+          setGifts(merged);
+        }
+      } catch (error) {
+        console.warn('Não foi possível sincronizar gifts da planilha:', error);
+        // Continua usando dados locais se a planilha não estiver disponível
+      }
+    };
+
+    // Sincroniza ao montar o componente
+    syncGifts();
+
+    // Sincroniza a cada 30 segundos
+    const interval = setInterval(syncGifts, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Sincronização localStorage
   useEffect(() => {
@@ -274,7 +336,24 @@ export default function App() {
       preferencias: isAttending ? preferences : null,
       data_confirmacao: new Date().toISOString()
     };
+    
+    // Salva localmente
     localStorage.setItem(`NATHAN_PRESENCA_${family.codigo}`, JSON.stringify(presencaData));
+    
+    // Salva na planilha do Google
+    try {
+      await saveRSVP({
+        codigo: family.codigo,
+        familia: family.familia,
+        status: isAttending ? 'sim' : 'nao',
+        membros_confirmados: isAttending ? convidadosConfirmados : [],
+        preferencias: isAttending ? { ...preferences } : {}
+      });
+      console.log('RSVP salvo na planilha com sucesso!');
+    } catch (error) {
+      console.warn('Erro ao salvar RSVP na planilha:', error);
+      // Continua mesmo se falhar, já que salvou localmente
+    }
     
     // Atualizar presencasDB em tempo real
     setPresencasDB(prev => ({
@@ -305,6 +384,36 @@ export default function App() {
 
     setGifts(updatedGifts);
     setLastDonationAmount(donationAmount);
+    
+    // Salva doação na planilha
+    try {
+      const donationResult = await saveDonation({
+        codigo: family?.codigo || '',
+        familia: family?.familia || 'Anônimo',
+        giftId: selectedGift.id,
+        giftName: selectedGift.name,
+        amount: numAmount,
+        metodo: 'PIX',
+        comprovanteUrl: '',
+        observacoes: ''
+      });
+      console.log('Doação salva na planilha com sucesso!', donationResult);
+      
+      // Atualiza o valor arrecadado do gift se retornou newCurrent
+      if (donationResult.ok && donationResult.newCurrent) {
+        const updatedGifts = gifts.map(g => {
+          if (g.id === selectedGift.id) {
+            return { ...g, current: donationResult.newCurrent };
+          }
+          return g;
+        });
+        setGifts(updatedGifts);
+      }
+    } catch (error) {
+      console.warn('Erro ao salvar doação na planilha:', error);
+      // Continua mesmo se falhar, já que salvou localmente
+    }
+    
     setSelectedGift(null);
     setShowThankYou(true);
   };
@@ -728,9 +837,20 @@ export default function App() {
                         <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
                           <h3 className="font-bold text-slate-800 mb-3 text-xs uppercase tracking-wide">Imagem de Fundo</h3>
                           <div className="flex flex-col gap-3">
+                            <div className="grid grid-cols-3 gap-2">
+                              {NATHAN_PHOTOS.map((photo, idx) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => setEditBg(photo)}
+                                  className={`rounded-lg overflow-hidden border-2 transition-all h-16 ${editBg === photo ? 'border-yellow-400 shadow-md scale-105' : 'border-slate-300 hover:border-yellow-200'}`}
+                                >
+                                  <img src={photo} alt={`Nathan ${idx + 1}`} className="w-full h-full object-cover" />
+                                </button>
+                              ))}
+                            </div>
                             <label className="cursor-pointer bg-slate-800 text-white px-4 py-3 rounded-xl text-sm font-medium hover:bg-slate-700 transition flex items-center justify-center gap-2 shadow-sm w-full">
                               <Upload className="w-4 h-4" />
-                              Escolher Imagem
+                              Outra Imagem
                               <input type="file" accept="image/*" onChange={handleBgUpload} className="hidden" />
                             </label>
                             {editBg && (
@@ -742,9 +862,20 @@ export default function App() {
                         <div className="bg-green-50 p-5 rounded-2xl border border-green-200">
                           <h3 className="font-bold text-green-800 mb-3 text-xs uppercase tracking-wide">Agradecimento (PIX)</h3>
                           <div className="flex flex-col gap-3">
+                            <div className="grid grid-cols-3 gap-2">
+                              {NATHAN_PHOTOS.map((photo, idx) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => setEditThankYouImg(photo)}
+                                  className={`rounded-lg overflow-hidden border-2 transition-all h-16 ${editThankYouImg === photo ? 'border-green-600 shadow-md scale-105' : 'border-green-200 hover:border-green-400'}`}
+                                >
+                                  <img src={photo} alt={`Nathan ${idx + 1}`} className="w-full h-full object-cover" />
+                                </button>
+                              ))}
+                            </div>
                             <label className="cursor-pointer bg-green-600 text-white px-4 py-3 rounded-xl text-sm font-medium hover:bg-green-700 transition flex items-center justify-center gap-2 shadow-sm w-full">
                               <Upload className="w-4 h-4" />
-                              Escolher Foto
+                              Outra Foto
                               <input type="file" accept="image/*" onChange={handleThankYouUpload} className="hidden" />
                             </label>
                             {editThankYouImg && (
